@@ -1,336 +1,448 @@
 <!DOCTYPE html>
-<html lang="en" class="h-full">
+<html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>K8s Reclaim Policy Simulator (Retain • Delete • Recycle)</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
-  <style>
-    body { font-family: 'Geist', ui-sans-serif, system-ui; }
-    @keyframes float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
-    .float { animation: float 6s ease-in-out infinite; }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>K8s PV Retain Policy Simulator</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Babel for in-browser JSX transformation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Preload styles to prevent flash -->
+    <style>
+        body { font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+    </style>
 </head>
-<body class="bg-gray-50 text-gray-800 dark:bg-gray-950 dark:text-gray-200 min-h-screen">
-  <div id="root"></div>
+<body class="bg-slate-50 text-slate-800">
+    <div id="root"></div>
 
-  <script type="text/babel" data-type="module">
-    import React, { useState, useEffect } from 'https://esm.sh/react@18.2.0';
-    import { createRoot } from 'https://esm.sh/react-dom@18.2.0/client';
+    <!-- Main Application Script -->
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useRef } from 'https://esm.sh/react@18.2.0';
+        import { createRoot } from 'https://esm.sh/react-dom@18.2.0/client';
+        import { 
+            Box, 
+            Database, 
+            Trash2, 
+            RefreshCw, 
+            CheckCircle2, 
+            XCircle, 
+            AlertCircle, 
+            ArrowDown, 
+            Eraser, 
+            Lock 
+        } from 'https://esm.sh/lucide-react@0.292.0';
 
-    const { Database, Box, Trash2, RefreshCw, CheckCircle2, XCircle, AlertCircle, ArrowDown, Eraser, Lock, RotateCcw, Sun, Moon, Info } = lucide;
+        function K8sPVGame() {
+            // --- Game State ---
+            const [pv, setPv] = useState(null);
+            const [pvc, setPvc] = useState(null);
+            const [logs, setLogs] = useState([]);
+            
+            // Simulation Step (for animation timing)
+            const [matchingStep, setMatchingStep] = useState(0);
 
-    const RECLAIM_POLICIES = {
-      Retain: { color: "amber", desc: "Data kept. PV becomes Released. Manual cleanup required." },
-      Delete: { color: "red", desc: "PV + underlying storage automatically deleted." },
-      Recycle: { color: "purple", desc: "[Deprecated] PV scrubbed and becomes Available again." }
-    };
+            // Constants for the scenario
+            const SCENARIO_SC = "fast-ssd";
+            const SCENARIO_MODE = "ReadWriteOnce";
+            const SCENARIO_LABEL_KEY = "env";
+            const SCENARIO_LABEL_VAL = "prod";
 
-    function K8sStorageSimulator() {
-      const [darkMode, setDarkMode] = useState(false);
-      const [reclaimPolicy, setReclaimPolicy] = useState("Retain");
-      const [pv, setPv] = useState(null);
-      const [pvcs, setPvcs] = useState([]);
-      const [logs, setLogs] = useState([]);
-      const [step, setStep] = useState(0);
+            // --- Actions ---
 
-      const addLog = (msg, type = "info") => {
-        const time = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'});
-        setLogs(prev => [{time, msg, type, id: Date.now()}, ...prev].slice(0, 12));
-      };
+            const addLog = (msg, type = 'info') => {
+                const timestamp = new Date().toLocaleTimeString();
+                setLogs(prev => [{ id: Date.now(), time: timestamp, msg, type }, ...prev].slice(0, 5));
+            };
 
-      useEffect(() => {
-        if (darkMode) document.documentElement.classList.add('dark');
-        else document.documentElement.classList.remove('dark');
-      }, [darkMode]);
+            const createPV = () => {
+                if (pv) return;
+                setPv({
+                    id: "pv-volume-01",
+                    capacity: 10,
+                    storageClass: SCENARIO_SC,
+                    accessModes: [SCENARIO_MODE],
+                    labels: { [SCENARIO_LABEL_KEY]: SCENARIO_LABEL_VAL },
+                    status: "Available", // Available, Bound, Released
+                    claimRef: null, // The UID of the bound PVC
+                });
+                addLog("Created PV 'pv-volume-01' [Status: Available]", "success");
+            };
 
-      const createPV = () => {
-        if (pv) return;
-        const newPv = {
-          name: "pv-data-01",
-          capacity: 20,
-          storageClass: "standard",
-          accessModes: ["ReadWriteOnce"],
-          labels: { environment: "production" },
-          status: "Available",
-          claimRef: null,
-          reclaimPolicy
-        };
-        setPv(newPv);
-        addLog(`Created PV ${newPv.name} (ReclaimPolicy: ${reclaimPolicy})`, "success");
-      };
+            const createPVC = () => {
+                if (pvc) return;
+                setPvc({
+                    id: `pvc-claim-${Math.floor(Math.random() * 1000)}`, // New ID every time
+                    request: 5, // Less than PV (10)
+                    storageClass: SCENARIO_SC,
+                    accessModes: [SCENARIO_MODE],
+                    selector: { [SCENARIO_LABEL_KEY]: SCENARIO_LABEL_VAL },
+                    status: "Pending", // Pending, Bound
+                });
+                addLog("Created PVC Request. [Status: Pending]", "info");
+            };
 
-      const createPVC = () => {
-        const newPvc = {
-          id: `pvc-${Date.now().toString(36)}`,
-          name: `app-data-${pvcs.length + 1}`,
-          request: 8,
-          storageClass: "standard",
-          accessModes: ["ReadWriteOnce"],
-          selector: { environment: "production" },
-          status: "Pending",
-          boundTo: null
-        };
-        setPvcs(prev => [...prev, newPvc]);
-        addLog(`Created PVC ${newPvc.name} [Pending]`, "info");
-      };
+            const deletePVC = () => {
+                if (!pvc) return;
+                const oldPvcId = pvc.id;
+                
+                // Update PV status based on Retain policy
+                if (pv && pv.status === "Bound") {
+                setPv(prev => ({
+                    ...prev,
+                    status: "Released",
+                    // claimRef stays! This is the key to Retain policy
+                    claimRef: oldPvcId 
+                }));
+                addLog(`PVC deleted. PV matches Retain policy -> Status: Released. ClaimRef remains: ${oldPvcId}`, "warning");
+                } else {
+                addLog("PVC deleted.", "info");
+                }
 
-      const deletePVC = (pvcToDelete) => {
-        if (pvcToDelete.status !== "Bound") {
-          setPvcs(prev => prev.filter(p => p.id !== pvcToDelete.id));
-          addLog(`Deleted unbound PVC ${pvcToDelete.name}`, "warning");
-          return;
+                setPvc(null);
+                setMatchingStep(0);
+            };
+
+            const clearClaimRef = () => {
+                if (!pv) return;
+                if (pv.status !== "Released") {
+                addLog("Can only clear ClaimRef when PV is Released.", "error");
+                return;
+                }
+                
+                setPv(prev => ({
+                ...prev,
+                status: "Available",
+                claimRef: null
+                }));
+                addLog("Admin Action: ClaimRef cleared. PV Status -> Available", "success");
+            };
+
+            // --- The Controller Loop (Effect) ---
+            useEffect(() => {
+                const interval = setInterval(() => {
+                if (!pv || !pvc) {
+                    setMatchingStep(0);
+                    return;
+                }
+
+                // If already bound, do nothing
+                if (pv.status === "Bound" && pvc.status === "Bound") {
+                    setMatchingStep(5); // Show full green
+                    return;
+                }
+
+                // 1. Check Storage Class
+                if (pv.storageClass !== pvc.storageClass) return; 
+                if (matchingStep < 1) setMatchingStep(1);
+
+                // 2. Check Access Modes
+                if (!pv.accessModes.includes(pvc.accessModes[0])) return;
+                if (matchingStep < 2) setMatchingStep(2);
+
+                // 3. Check Capacity (PV >= PVC)
+                if (pv.capacity < pvc.request) return;
+                if (matchingStep < 3) setMatchingStep(3);
+
+                // 4. Check Selector/Labels
+                if (pv.labels[SCENARIO_LABEL_KEY] !== pvc.selector[SCENARIO_LABEL_KEY]) return;
+                if (matchingStep < 4) setMatchingStep(4);
+
+                // 5. Final Check: PV Status & ClaimRef
+                // logic: PV must be Available OR (Bound to THIS pvc already - logic handled above)
+                // If PV is Released, it cannot bind even if attributes match
+                if (pv.status === "Released") {
+                    // Stuck in pending
+                    return; 
+                }
+
+                if (pv.status === "Available") {
+                    // BINDING HAPPENS HERE
+                    setMatchingStep(5);
+                    
+                    // Execute Binding
+                    setPv(prev => ({ ...prev, status: "Bound", claimRef: pvc.id }));
+                    setPvc(prev => ({ ...prev, status: "Bound" }));
+                    addLog(`Controller: Match found! Binding PV to PVC.`, "success");
+                }
+
+                }, 1000);
+
+                return () => clearInterval(interval);
+            }, [pv, pvc, matchingStep]);
+
+
+            // --- Render Helpers ---
+
+            const getStatusColor = (status) => {
+                switch (status) {
+                case "Available": return "bg-blue-100 text-blue-800 border-blue-300";
+                case "Bound": return "bg-green-100 text-green-800 border-green-300";
+                case "Released": return "bg-amber-100 text-amber-800 border-amber-300";
+                case "Pending": return "bg-yellow-50 text-yellow-600 border-yellow-200 border-dashed";
+                default: return "bg-gray-100";
+                }
+            };
+
+            const CheckItem = ({ label, isMatch, stepIndex }) => {
+                let icon = <div className="w-5 h-5 rounded-full border-2 border-gray-300" />;
+                let textClass = "text-gray-400";
+
+                // If we passed this step
+                if (matchingStep >= stepIndex) {
+                if (isMatch) {
+                    icon = <CheckCircle2 className="w-5 h-5 text-green-500" />;
+                    textClass = "text-green-700 font-medium";
+                } else {
+                    // Only show red if we have both objects and failed
+                    if (pv && pvc) {
+                        icon = <XCircle className="w-5 h-5 text-red-500" />;
+                        textClass = "text-red-700 font-medium";
+                    }
+                }
+                }
+
+                return (
+                <div className={`flex items-center gap-2 p-2 rounded ${matchingStep === stepIndex ? 'bg-blue-50 animate-pulse' : ''}`}>
+                    {icon}
+                    <span className={`text-sm ${textClass}`}>{label}</span>
+                </div>
+                );
+            };
+
+            return (
+                <div className="flex flex-col h-screen bg-slate-50 font-sans text-slate-800 overflow-hidden">
+                
+                {/* Header */}
+                <header className="bg-slate-900 text-white p-4 shadow-md flex justify-between items-center z-10">
+                    <div className="flex items-center gap-2">
+                    <Database className="w-6 h-6 text-blue-400" />
+                    <h1 className="text-xl font-bold tracking-wide">K8s Storage <span className="text-blue-400">Retain</span> Simulator</h1>
+                    </div>
+                    <div className="text-xs text-slate-400">Policy: Retain</div>
+                </header>
+
+                {/* Main Content Area */}
+                <main className="flex-1 flex flex-col md:flex-row overflow-hidden">
+                    
+                    {/* Left: Controls */}
+                    <div className="w-full md:w-64 bg-white border-r border-slate-200 p-4 flex flex-col gap-4 shadow-sm z-10">
+                    <h2 className="text-xs uppercase font-bold text-slate-400 mb-2">Cluster Operations</h2>
+                    
+                    <button 
+                        onClick={createPV} 
+                        disabled={!!pv}
+                        className="flex items-center gap-2 px-4 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-lg shadow-sm transition-all"
+                    >
+                        <Database className="w-4 h-4" /> Create PV
+                    </button>
+
+                    <button 
+                        onClick={createPVC} 
+                        disabled={!!pvc}
+                        className="flex items-center gap-2 px-4 py-3 bg-orange-600 hover:bg-orange-700 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-lg shadow-sm transition-all"
+                    >
+                        <Box className="w-4 h-4" /> Create PVC
+                    </button>
+
+                    <div className="h-px bg-slate-200 my-2"></div>
+
+                    <button 
+                        onClick={deletePVC} 
+                        disabled={!pvc}
+                        className="flex items-center gap-2 px-4 py-3 bg-red-100 hover:bg-red-200 disabled:bg-slate-100 disabled:text-slate-300 text-red-700 rounded-lg shadow-sm transition-all border border-red-200"
+                    >
+                        <Trash2 className="w-4 h-4" /> Delete PVC
+                    </button>
+
+                    <button 
+                        onClick={clearClaimRef} 
+                        disabled={!pv || pv.status !== "Released"}
+                        className="flex items-center gap-2 px-4 py-3 bg-emerald-100 hover:bg-emerald-200 disabled:bg-slate-100 disabled:text-slate-300 text-emerald-700 rounded-lg shadow-sm transition-all border border-emerald-200"
+                    >
+                        <Eraser className="w-4 h-4" /> Remove ClaimRef
+                    </button>
+                    
+                    <div className="mt-auto bg-slate-100 p-3 rounded-lg border border-slate-200">
+                        <h3 className="text-xs font-bold text-slate-500 mb-2">Console Logs</h3>
+                        <div className="space-y-2 max-h-48 overflow-y-auto font-mono text-xs">
+                        {logs.length === 0 && <span className="text-slate-400 italic">Cluster ready...</span>}
+                        {logs.map((log) => (
+                            <div key={log.id} className={`break-words ${log.type === 'error' ? 'text-red-600' : log.type === 'success' ? 'text-green-600' : log.type === 'warning' ? 'text-amber-600' : 'text-slate-600'}`}>
+                            <span className="opacity-50">[{log.time}]</span> {log.msg}
+                            </div>
+                        ))}
+                        </div>
+                    </div>
+                    </div>
+
+                    {/* Center: Visualization Canvas */}
+                    <div className="flex-1 bg-slate-50 relative flex flex-col items-center justify-center p-8 overflow-y-auto">
+                    
+                    {/* PV Block */}
+                    <div className={`transition-all duration-500 transform ${pv ? 'translate-y-0 opacity-100' : '-translate-y-10 opacity-0'}`}>
+                        {pv && (
+                        <div className={`w-80 p-5 rounded-xl border-2 shadow-lg relative ${getStatusColor(pv.status)}`}>
+                            <div className="flex justify-between items-start mb-2">
+                            <div className="flex items-center gap-2">
+                                <Database className="w-5 h-5" />
+                                <span className="font-bold">PersistentVolume</span>
+                            </div>
+                            <span className="text-xs font-mono px-2 py-1 bg-white/50 rounded border border-black/10 uppercase">{pv.status}</span>
+                            </div>
+                            
+                            <div className="space-y-2 text-sm opacity-90">
+                            <div className="flex justify-between"><span>Class:</span> <span className="font-mono font-bold">{pv.storageClass}</span></div>
+                            <div className="flex justify-between"><span>Cap:</span> <span className="font-mono font-bold">{pv.capacity}Gi</span></div>
+                            <div className="flex justify-between"><span>Mode:</span> <span className="font-mono font-bold">{pv.accessModes[0]}</span></div>
+                            <div className="flex justify-between"><span>Labels:</span> <span className="font-mono bg-white/50 px-1 rounded">{SCENARIO_LABEL_KEY}:{SCENARIO_LABEL_VAL}</span></div>
+                            </div>
+
+                            {/* ClaimRef Indicator */}
+                            <div className={`mt-3 p-2 rounded text-xs border flex items-center gap-2 ${pv.claimRef ? 'bg-amber-200/50 border-amber-400 text-amber-900' : 'bg-slate-200/50 border-slate-300 text-slate-500'}`}>
+                            <Lock className="w-3 h-3" />
+                            <div className="flex-1 truncate">
+                                Ref: {pv.claimRef ? <span className="font-mono">{pv.claimRef}</span> : "None"}
+                            </div>
+                            </div>
+                        </div>
+                        )}
+                        {!pv && <div className="w-80 h-48 border-2 border-dashed border-slate-300 rounded-xl flex items-center justify-center text-slate-400">No PV Created</div>}
+                    </div>
+
+                    {/* Connection Lines */}
+                    <div className="h-24 w-1 flex flex-col items-center justify-center relative">
+                        <div className={`w-0.5 h-full transition-all duration-500 ${pv && pvc && pv.status === 'Bound' ? 'bg-green-500' : 'bg-slate-300'}`}></div>
+                        {pv && pvc && pv.status !== 'Bound' && (
+                        <div className="absolute bg-white p-1 rounded-full shadow border border-slate-200 animate-bounce">
+                            <ArrowDown className="w-4 h-4 text-slate-400" />
+                        </div>
+                        )}
+                        {pv && pvc && pv.status === 'Bound' && (
+                        <div className="absolute bg-green-100 p-1 rounded-full shadow border border-green-500">
+                            <CheckCircle2 className="w-6 h-6 text-green-600" />
+                        </div>
+                        )}
+                    </div>
+
+                    {/* PVC Block */}
+                    <div className={`transition-all duration-500 transform ${pvc ? 'translate-y-0 opacity-100' : 'translate-y-10 opacity-0'}`}>
+                        {pvc && (
+                        <div className={`w-80 p-5 rounded-xl border-2 shadow-lg ${getStatusColor(pvc.status)}`}>
+                            <div className="flex justify-between items-start mb-2">
+                            <div className="flex items-center gap-2">
+                                <Box className="w-5 h-5" />
+                                <span className="font-bold">PVC Request</span>
+                            </div>
+                            <span className="text-xs font-mono px-2 py-1 bg-white/50 rounded border border-black/10 uppercase">{pvc.status}</span>
+                            </div>
+
+                            <div className="space-y-2 text-sm opacity-90">
+                            <div className="flex justify-between"><span>Want Class:</span> <span className="font-mono font-bold">{pvc.storageClass}</span></div>
+                            <div className="flex justify-between"><span>Want Size:</span> <span className="font-mono font-bold">≤ {pvc.request}Gi</span></div>
+                            <div className="flex justify-between"><span>Want Mode:</span> <span className="font-mono font-bold">{pvc.accessModes[0]}</span></div>
+                            <div className="flex justify-between"><span>Selector:</span> <span className="font-mono bg-white/50 px-1 rounded">{SCENARIO_LABEL_KEY}:{SCENARIO_LABEL_VAL}</span></div>
+                            </div>
+                            
+                            <div className="mt-3 text-xs text-center opacity-60 font-mono">
+                            ID: {pvc.id}
+                            </div>
+                        </div>
+                        )}
+                        {!pvc && <div className="w-80 h-48 border-2 border-dashed border-slate-300 rounded-xl flex items-center justify-center text-slate-400">No PVC Created</div>}
+                    </div>
+
+                    </div>
+
+                    {/* Right: Logic Visualizer */}
+                    <div className="w-full md:w-80 bg-white border-l border-slate-200 p-6 z-10 shadow-lg">
+                    <div className="mb-6">
+                        <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                        <RefreshCw className={`w-5 h-5 ${pv && pvc && pv.status !== 'Bound' ? 'animate-spin text-blue-500' : 'text-slate-400'}`} />
+                        Controller Loop
+                        </h2>
+                        <p className="text-xs text-slate-500 mt-1">
+                        Kubernetes constantly checks these conditions to bind volumes.
+                        </p>
+                    </div>
+
+                    <div className="space-y-1">
+                        <CheckItem 
+                        stepIndex={1} 
+                        label="StorageClass Matches" 
+                        isMatch={pv && pvc && pv.storageClass === pvc.storageClass} 
+                        />
+                        <CheckItem 
+                        stepIndex={2} 
+                        label="Access Modes Match" 
+                        isMatch={pv && pvc && pv.accessModes[0] === pvc.accessModes[0]} 
+                        />
+                        <CheckItem 
+                        stepIndex={3} 
+                        label="Requested Size ≤ PV Size" 
+                        isMatch={pv && pvc && pv.capacity >= pvc.request} 
+                        />
+                        <CheckItem 
+                        stepIndex={4} 
+                        label="Selector Matches Labels" 
+                        isMatch={pv && pvc && pv.labels[SCENARIO_LABEL_KEY] === pvc.selector[SCENARIO_LABEL_KEY]} 
+                        />
+                        
+                        <div className="my-4 border-t border-slate-200"></div>
+                        
+                        <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                        <h4 className="text-xs font-bold uppercase text-slate-500 mb-2">Availability Check</h4>
+                        
+                        <div className="flex items-center justify-between mb-1">
+                            <span className="text-sm">PV Status:</span>
+                            <span className={`text-xs font-mono px-2 rounded ${pv ? getStatusColor(pv.status) : 'bg-gray-200'}`}>
+                            {pv ? pv.status : 'N/A'}
+                            </span>
+                        </div>
+
+                        <div className="flex items-center justify-between">
+                            <span className="text-sm">Claim Ref:</span>
+                            <span className={`text-xs font-mono px-2 rounded ${pv && pv.claimRef ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                            {pv ? (pv.claimRef ? 'Occupied' : 'Free') : 'N/A'}
+                            </span>
+                        </div>
+                        </div>
+
+                        {pv && pv.status === 'Released' && pvc && (
+                        <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded text-amber-800 text-sm flex items-start gap-2">
+                            <AlertCircle className="w-5 h-5 flex-shrink-0" />
+                            <div>
+                            <strong>Binding Blocked!</strong>
+                            <p className="text-xs mt-1">
+                                The PV is <code>Released</code> but still holds a reference (ClaimRef) to the old PVC. 
+                                You must manually delete the ClaimRef (Admin action) to make it <code>Available</code> again.
+                            </p>
+                            </div>
+                        </div>
+                        )}
+                        {pv && pv.status === 'Bound' && pvc && (
+                        <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded text-green-800 text-sm flex items-center gap-2">
+                            <CheckCircle2 className="w-5 h-5 flex-shrink-0" />
+                            <div>
+                            <strong>Bound Successfully</strong>
+                            <p className="text-xs mt-1">Application can now write to disk.</p>
+                            </div>
+                        </div>
+                        )}
+
+                    </div>
+                    </div>
+
+                </main>
+                </div>
+            );
         }
 
-        const policy = pv.reclaimPolicy;
-
-        if (policy === "Delete") {
-          addLog(`ReclaimPolicy=Delete → Deleting PV + underlying storage...`, "warning");
-          setPv(null);
-        } else if (policy === "Recycle") {
-          addLog(`ReclaimPolicy=Recycle → Scrubbing PV... → Available`, "info");
-          setPv(prev => ({ ...prev, status: "Available", claimRef: null }));
-        } else { // Retain
-          addLog(`ReclaimPolicy=Retain → PV becomes Released. Data preserved.`, "warning");
-          setPv(prev => ({ ...prev, status: "Released", claimRef: pvcToDelete.id }));
-        }
-
-        setPvcs(prev => prev.map(p => p.id === pvcToDelete.id ? { ...p, status: "Terminated" } : p));
-        addLog(`PVC ${pvcToDelete.name} deleted`, "warning");
-
-        setTimeout(() => {
-          setPvcs(prev => prev.filter(p => p.id !== pvcToDelete.id));
-        }, 1500);
-      };
-
-      const recycleOrClearPV = () => {
-        if (!pv || pv.status !== "Released") return;
-        setPv(prev => ({ ...prev, status: "Available", claimRef: null }));
-        addLog(`Admin: Cleared ClaimRef → PV Available again`, "success");
-      };
-
-      const resetCluster = () => {
-        setPv(null);
-        setPvcs([]);
-        setLogs([]);
-        setStep(0);
-        addLog("Cluster reset", "info");
-      };
-
-      // Controller reconciliation loop
-      useEffect(() => {
-        const interval = setInterval(() => {
-          if (!pv || pvcs.length === 0 || pv.status !== "Available") {
-            setStep(0);
-            return;
-          }
-
-          const pendingPvc = pvcs.find(p => p.status === "Pending");
-          if (!pendingPvc) {
-            setStep(6);
-            return;
-          }
-
-          // Matching logic
-          let current = 0;
-          if (pv.storageClass === pendingPvc.storageClass) current = 1;
-          if (pv.accessModes[0] === pendingPvc.accessModes[0]) current = 2;
-          if (pv.capacity >= pendingPvc.request) current = 3;
-          if (pv.labels.environment === pendingPvc.selector.environment) current = 4;
-
-          setStep(current);
-
-          if (current === 4) {
-            setTimeout(() => {
-              setPv(prev => ({ ...prev, status: "Bound", claimRef: pendingPvc.id }));
-              setPvcs(prev => prev.map(p => p.id === pendingPvc.id ? { ...p, status: "Bound", boundTo: pv.name } : p));
-              addLog(`Bound PVC ${pendingPvc.name} → PV ${pv.name}`, "success");
-              setStep(6);
-            }, 800);
-          }
-        }, 800);
-
-        return () => clearInterval(interval);
-      }, [pv, pvcs]);
-
-      const getStatusBadge = (status) => {
-        const map = {
-          Available: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
-          Bound: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
-          Released: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200",
-          Pending: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
-        };
-        return map[status] || "bg-gray-200 text-gray-600";
-      };
-
-      return (
-        <div className="min-h-screen flex flex-col">
-          {/* Header */}
-          <header className="bg-gray-900 text-white p-4 shadow-xl">
-            <div className="max-w-7xl mx-auto flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <Database className="w-8 h-8 text-cyan-400" />
-                <h1 className="text-2xl font-bold">
-                  Kubernetes Reclaim Policy Simulator
-                </h1>
-              </div>
-              <div className="flex items-center gap-4">
-                <button onClick={() => setDarkMode(!darkMode)} className="p-2 hover:bg-white/10 rounded-lg">
-                  {darkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-                </button>
-                <button onClick={resetCluster} className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg text-sm">
-                  <RotateCcw className="w-4 h-4" /> Reset
-                </button>
-              </div>
-            </div>
-          </header>
-
-          <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
-            {/* Left Sidebar */}
-            <aside className="w-full lg:w-80 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 p-6 space-y-6 overflow-y-auto">
-              <div>
-                <h3 className="text-sm font-bold uppercase text-gray-500 dark:text-gray-400 mb-3">Reclaim Policy</h3>
-                <div className="grid grid-cols-1 gap-3">
-                  {Object.entries(RECLAIM_POLICIES).map(([policy, {color, desc}]) => (
-                    <label key={policy} className={`block p-4 rounded-lg border-2 cursor-pointer transition-all ${reclaimPolicy === policy ? `border-${color}-500 bg-${color}-50 dark:bg-${color}-900/20` : 'border-gray-300 dark:border-gray-700'}`}>
-                      <input type="radio" name="policy" checked={reclaimPolicy === policy} onChange={() => setReclaimPolicy(policy)} className="sr-only" />
-                      <div className="flex items-start gap-3">
-                        <div className={`w-5 h-5 rounded-full border-2 ${reclaimPolicy === policy ? `border-${color}-600 bg-${color}-600` : 'border-gray-400'}`} />
-                        <div>
-                          <div className="font-semibold">{policy}</div>
-                          <div className="text-xs text-gray-600 dark:text-gray-400 mt-1">{desc}</div>
-                        </div>
-                      </div>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                <h3 className="text-sm font-bold uppercase text-gray-500 dark:text-gray-400">Actions</h3>
-                <button onClick={createPV} disabled={!!pv} className="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 text-white rounded-lg flex items-center justify-center gap-2">
-                  <Database className="w-5 h-5" /> Create PV (20Gi)
-                </button>
-                <button onClick={createPVC} disabled={!pv || pv.status !== "Available"} className="w-full py-3 px-4 bg-orange-600 hover:bg-orange-700 disabled:bg-gray-300 text-white rounded-lg flex items-center justify-center gap-2">
-                  <Box className="w-5 h-5" /> Create PVC (8Gi)
-                </button>
-                {pv?.status === "Released" && reclaimPolicy === "Retain" && (
-                  <button onClick={recycleOrClearPV} className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg flex items-center justify-center gap-2">
-                    <Eraser className="w-5 h-5" /> Clear ClaimRef (Admin)
-                  </button>
-                )}
-              </div>
-
-              <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-4">
-                <h3 className="text-sm font-bold mb-3 flex items-center gap-2">
-                  <Info className="w-4 h-4" /> Current Policy: <span className={`text-${RECLAIM_POLICIES[reclaimPolicy].color}-600`}>{reclaimPolicy}</span>
-                </h3>
-                <p className="text-xs text-gray-600 dark:text-gray-400 leading-relaxed">
-                  {reclaimPolicy === "Retain" && "Data is preserved after PVC deletion. PV becomes Released and cannot be reused until manually cleaned."}
-                  {reclaimPolicy === "Delete" && "Most cloud providers delete the disk automatically. Common in production."}
-                  {reclaimPolicy === "Recycle" && "Deprecated. PV is scrubbed and reused. Rarely used today."}
-                </p>
-              </div>
-            </aside>
-
-            {/* Main Canvas */}
-            <main className="flex-1 bg-gradient-to-b from-gray-50 to-gray-100 dark:from-gray-950 dark:to-black p-8 overflow-y-auto">
-              <div className="max-w-5xl mx-auto space-y-12">
-                {/* PV */}
-                <div className="flex justify-center">
-                  <div className={`w-96 p-6 rounded-2xl shadow-2xl border-4 transition-all duration-1000 ${pv ? getStatusBadge(pv.status) + ' border-opacity-100' : 'border-dashed border-gray-400'}`}>
-                    {pv ? (
-                      <>
-                        <div className="flex justify-between items-center mb-4">
-                          <h2 className="text-xl font-bold flex items-center gap-2"><Database className="w-6 h-6" /> {pv.name}</h2>
-                          <span className="text-xs font-bold px-3 py-1 rounded-full bg-black/10">{pv.status}</span>
-                        </div>
-                        <div className="space-y-2 text-sm">
-                          <div><strong>Capacity:</strong> {pv.capacity}Gi</div>
-                          <div><strong>Reclaim Policy:</strong> <span className={`font-bold text-${RECLAIM_POLICIES[pv.reclaimPolicy].color}-600`}>{pv.reclaimPolicy}</span></div>
-                          {pv.claimRef && <div className="mt-3 p-3 bg-red-100 dark:bg-red-900/30 rounded border border-red-400 text-red-800 dark:text-red-300 text-xs font-mono"><Lock className="w-4 h-4 inline" /> ClaimRef: {pv.claimRef}</div>}
-                        </div>
-                      </>
-                    ) : (
-                      <div className="text-center text-gray-500 py-12">No PV Created</div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Connection */}
-                <div className="flex justify-center">
-                  <div className="h-32 w-1 relative">
-                    <div className={`absolute inset-0 w-1 bg-gradient-to-b ${pv?.status === 'Bound' ? 'from-green-500 to-green-400' : 'from-gray-400 to-gray-500'}`} />
-                    {step > 0 && step < 5 && <ArrowDown className="absolute top-8 left-1/2 -translate-x-1/2 w-8 h-8 text-blue-500 animate-bounce" />}
-                    {step === 6 && <CheckCircle2 className="absolute top-10 left-1/2 -translate-x-1/2 w-10 h-10 text-green-500" />}
-                  </div>
-                </div>
-
-                {/* PVCs */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {pvcs.map(pvc => (
-                    <div key={pvc.id} className={`p-5 rounded-xl shadow-lg border-2 ${getStatusBadge(pvc.status)} transition-all`}>
-                      <div className="flex justify-between items-start mb-3">
-                        <h3 className="font-bold flex items-center gap-2"><Box className="w-5 h-5" /> {pvc.name}</h3>
-                        <button onClick={() => deletePVC(pvc)} className="text-red-600 hover:bg-red-100 dark:hover:bg-red-900/30 p-1 rounded">
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                      <div className="text-xs space-y-1">
-                        <div><strong>Request:</strong> {pvc.request}Gi</div>
-                        <div><strong>Status:</strong> {pvc.status}</div>
-                        {pvc.boundTo && <div className="text-green-700 dark:text-green-400 font-mono text-xs mt-2">→ {pvc.boundTo}</div>}
-                      </div>
-                    </div>
-                  ))}
-                  {pvcs.length === 0 && <div className="col-span-full text-center text-gray-400 py-12 text-lg">No PVCs created yet</div>}
-                </div>
-              </div>
-            </main>
-
-            {/* Right Panel: Controller + Logs */}
-            <aside className="w-full lg:w-96 bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 p-6 overflow-y-auto">
-              <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
-                <RefreshCw className={`w-5 h-5 ${step > 0 && step < 6 ? 'animate-spin text-blue-500' : ''}`} />
-                Controller Reconciliation
-              </h2>
-              <div className="space-y-3 text-sm">
-                {["StorageClass", "Access Mode", "Capacity", "Label Selector"].map((label, i) => (
-                  <div key={i} className={`flex items-center gap-3 p-3 rounded-lg ${step > i ? 'bg-green-50 dark:bg-green-900/20' : step === i+1 ? 'bg-blue-50 dark:bg-blue-900/30 animate-pulse' : 'bg-gray-50 dark:bg-gray-800'}`}>
-                    {step > i ? <CheckCircle2 className="w-5 h-5 text-green-600" /> : step === i+1 ? <RefreshCw className="w-5 h-5 text-blue-600 animate-spin" /> : <div className="w-5 h-5 rounded-full border-2 border-gray-300" />}
-                    <span className={step > i ? "font-medium" : ""}>{label} Match</span>
-                  </div>
-                ))}
-              </div>
-
-              {pv?.status === "Released" && (
-                <div className="mt-6 p-4 bg-amber-100 dark:bg-amber-900/30 border border-amber-400 rounded-lg">
-                  <strong className="flex items-center gap-2"><AlertCircle className="w-5 h-5" /> Binding Blocked</strong>
-                  <p className="text-xs mt-2">PV is Released but still references deleted PVC. Requires manual admin intervention.</p>
-                </div>
-              )}
-
-              <div className="mt-8">
-                <h3 className="font-bold mb-3 text-sm uppercase text-gray-500">Event Log</h3>
-                <div className="font-mono text-xs space-y-1 max-h-96 overflow-y-auto bg-gray-50 dark:bg-gray-800 p-3 rounded">
-                  {logs.length === 0 && <span className="text-gray-400">Waiting for events...</span>}
-                  {logs.map(log => (
-                    <div key={log.id} className={log.type === "success" ? "text-green-600" : log.type === "warning" ? "text-amber-600" : ""}>
-                      <span className="opacity-60">[{log.time}]</span> {log.msg}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </aside>
-          </div>
-        </div>
-      );
-    }
-
-    const root = createRoot(document.getElementById('root'));
-    root.render(<K8sStorageSimulator />);
-  </script>
+        const root = createRoot(document.getElementById('root'));
+        root.render(<K8sPVGame />);
+    </script>
 </body>
 </html>
